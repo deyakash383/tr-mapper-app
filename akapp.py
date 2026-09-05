@@ -3,97 +3,13 @@ import pandas as pd
 import io
 
 st.set_page_config(page_title="TR Sheet Processor", layout="wide")
-st.title("TR Sheet Mapper & Downloader (Pro Version)")
-st.info("💡 Yeh tool 3 files ka data combine karke exact Truscholar format generate karega.")
-
-# --- Helper Function for Demo Files ---
-def to_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
-    return output.getvalue()
+st.title("TR Sheet Mapper & Downloader (Fully Automated)")
+st.info("💡 Yeh tool ek hi TR file ke andar maujud 'Program Structure' aur 'TR Sheet' dono ko apne aap read kar lega!")
 
 # ==========================================
-# STEP 1 & 2: SUPPLEMENTARY FILES UPLOAD
+# SINGLE FILE UPLOAD (TR Sheet with Structure)
 # ==========================================
-st.header("Step 1 & 2: Upload Mapping Files")
-col1, col2 = st.columns(2)
-
-student_map = {}
-credit_map = {}
-grand_total_structure = ""
-
-with col1:
-    st.subheader("1. Student Details")
-    demo_student_df = pd.DataFrame({
-        "Enrollment No": ["240810500024", "240810500025"], 
-        "Student Name": ["Aasmant Umesh Mohadikar", "Rahul Kumar"], 
-        "Email ID": ["student@example.com", "rahul@example.com"], 
-        "Hall Admit No": ["HALL123", "HALL124"]
-    })
-    st.download_button("⬇️ Download Demo (Student Details)", data=to_excel(demo_student_df), file_name="Demo_Student_Details.xlsx")
-    student_file = st.file_uploader("Upload Student Details File:", type=["xlsx", "xls"], key="stu")
-
-    if student_file:
-        try:
-            sdf = pd.read_excel(student_file)
-            sdf.columns = [str(c).strip().upper() for c in sdf.columns]
-            
-            enr_col = [c for c in sdf.columns if 'ENROLL' in c or 'ROLL' in c or 'REG' in c]
-            name_col_stu = [c for c in sdf.columns if 'NAME' in c]
-            email_col = [c for c in sdf.columns if 'EMAIL' in c]
-            hall_col = [c for c in sdf.columns if 'HALL' in c or 'ADMIT' in c]
-            
-            if enr_col:
-                for _, row in sdf.iterrows():
-                    reg = str(row[enr_col[0]]).strip()
-                    stu_name = str(row[name_col_stu[0]]).strip() if name_col_stu and pd.notna(row[name_col_stu[0]]) else ""
-                    email = str(row[email_col[0]]).strip() if email_col and pd.notna(row[email_col[0]]) else ""
-                    hall = str(row[hall_col[0]]).strip() if hall_col and pd.notna(row[hall_col[0]]) else ""
-                    
-                    student_map[reg] = {"email": email, "hall": hall, "name": stu_name}
-                st.success("✅ Student Details mapped successfully!")
-            else:
-                st.error("Enrollment No column not found in Student Details file.")
-        except Exception as e:
-            st.error(f"Error reading Student file: {e}")
-
-with col2:
-    st.subheader("2. Credit Structure")
-    demo_credit_df = pd.DataFrame({
-        "Sub Code": ["AVP204", "AVP205", "AVP207", "Total"], 
-        "Credit Structure": ["0-3-0", "0-3-0", "3-0-0", "03-10-08"]
-    })
-    st.download_button("⬇️ Download Demo (Credit Structure)", data=to_excel(demo_credit_df), file_name="Demo_Credit_Structure.xlsx")
-    credit_file = st.file_uploader("Upload Credit Structure File:", type=["xlsx", "xls"], key="cred")
-
-    if credit_file:
-        try:
-            cdf = pd.read_excel(credit_file)
-            cdf.columns = [str(c).strip().upper() for c in cdf.columns]
-            
-            code_col = [c for c in cdf.columns if 'CODE' in c or 'SUB' in c]
-            struct_col = [c for c in cdf.columns if 'CREDIT' in c or 'STRUCTURE' in c]
-            
-            if code_col and struct_col:
-                for _, row in cdf.iterrows():
-                    code = str(row[code_col[0]]).strip().upper()
-                    struct = str(row[struct_col[0]]).strip()
-                    if code == 'TOTAL':
-                        grand_total_structure = struct
-                    elif pd.notna(row[code_col[0]]):
-                        credit_map[code] = struct
-                st.success("✅ Credit Structure mapped successfully!")
-            else:
-                st.error("Sub Code or Credit Structure column not found.")
-        except Exception as e:
-            st.error(f"Error reading Credit file: {e}")
-
-# ==========================================
-# STEP 3: MAIN TR SHEET PROCESSING
-# ==========================================
-st.header("Step 3: Upload Main TR Sheet")
-uploaded_file = st.file_uploader("Upload Final TR Sheet (Excel):", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("Upload Main TR File (Excel containing Program Structure & Sem Sheet):", type=["xlsx", "xls"])
 
 def calculate_credits_from_structure(struct_str):
     try:
@@ -104,7 +20,44 @@ def calculate_credits_from_structure(struct_str):
 if uploaded_file is not None:
     try:
         xls = pd.ExcelFile(uploaded_file)
-        df = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None)
+        sheet_names = [s.strip() for s in xls.sheet_names]
+        
+        # 1. Automatically find Program Structure sheet & TR Sheet
+        prog_sheet_name = None
+        tr_sheet_name = None
+        
+        for s in sheet_names:
+            if 'program' in s.lower() or 'structure' in s.lower():
+                prog_sheet_name = s
+            elif s.lower() != 'program structure':
+                tr_sheet_name = s # Assuming the other sheet is the TR sheet
+                
+        if not tr_sheet_name:
+            tr_sheet_name = sheet_names[0] # Fallback
+
+        # Read Program Structure to build credit map automatically
+        credit_map = {}
+        grand_total_structure = ""
+        
+        if prog_sheet_name:
+            prog_df = pd.read_excel(xls, sheet_name=prog_sheet_name)
+            prog_df.columns = [str(c).strip().upper() for c in prog_df.columns]
+            
+            code_col = [c for c in prog_df.columns if 'CODE' in c or 'SUB' in c]
+            struct_col = [c for c in prog_df.columns if 'CREDIT' in c or 'STRUCTURE' in c]
+            
+            if code_col and struct_col:
+                for _, row in prog_df.iterrows():
+                    code_val = str(row[code_col[0]]).strip()
+                    struct_val = str(row[struct_col[0]]).strip()
+                    
+                    if code_val.upper() == 'TOTAL':
+                        grand_total_structure = struct_val
+                    elif pd.notna(row[code_col[0]]):
+                        credit_map[code_val.upper()] = struct_val
+
+        # Read Main TR Sheet
+        df = pd.read_excel(xls, sheet_name=tr_sheet_name, header=None)
 
         name_col, reg_col, sig_col = -1, -1, -1
         sgpa_col, percentage_col = -1, -1
@@ -120,7 +73,7 @@ if uploaded_file is not None:
             if 'PERCENTAGE' in val: percentage_col = i
 
         if reg_col == -1 or sig_col == -1:
-            st.error("Error: TR sheet mein 'Reg' aur 'ΣCiGi' columns hona zaroori hai.")
+            st.error("Error: TR sheet mein 'Reg' aur 'ΣCiGi' columns nahi mile.")
             st.stop()
 
         subjects = []
@@ -138,17 +91,18 @@ if uploaded_file is not None:
                     'code': subj_code,
                     'fallback_cred': fallback_cred
                 })
-                
             current_col += 9 
             
         subject_count = len(subjects)
         calculated_grand_ttl_marks = subject_count * 100
 
+        # Calculate Total Credits from the structure map automatically
         total_credits_num = 0
         for subj in subjects:
             struct = credit_map.get(subj['code'].upper(), subj['fallback_cred'])
             total_credits_num += calculate_credits_from_structure(struct) if '-' in str(struct) else int(float(struct)) if str(struct).isdigit() else 0
 
+        # Base Columns for Truscholar Format
         base_columns = [
             'NAME', 'EMAIL', 'ENROLLMENT_NO', 'HALL_ADMIT_NO', 'EXAM_CENTER', 
             'EXAM_DATE', 'RESULT_DATE', 'DEGREE_DATE', 'GRAND_TTL_MARKS', 
@@ -173,12 +127,11 @@ if uploaded_file is not None:
             new_row = {col: "" for col in base_columns}
 
             new_row["ENROLLMENT_NO"] = reg_no
-            
-            mapped_name = student_map.get(reg_no, {}).get("name", "")
-            new_row["NAME"] = mapped_name if mapped_name else tr_name
-            new_row["EMAIL"] = student_map.get(reg_no, {}).get("email", "")
-            new_row["HALL_ADMIT_NO"] = student_map.get(reg_no, {}).get("hall", "")
+            new_row["NAME"] = tr_name
+            new_row["EMAIL"] = ""
+            new_row["HALL_ADMIT_NO"] = ""
 
+            # --- AUTO-MAP GRAND TOTAL CREDITS (e.g. 03-10-08) FROM PROGRAM STRUCTURE ---
             new_row["GRAND_TTL_CREDITS"] = grand_total_structure 
             new_row["GRAND_TTL_MARKS"] = str(calculated_grand_ttl_marks) if calculated_grand_ttl_marks > 0 else ""
             
@@ -205,15 +158,13 @@ if uploaded_file is not None:
                 new_row[f"MIN_MARKS_TH__{num}"] = "" 
                 new_row[f"OBT_MARKS_TH__{num}"] = "" 
                 
+                # --- AUTO-MAP SUBJECT CREDIT STRUCTURE (e.g. 0-3-0) FROM PROGRAM STRUCTURE ---
                 new_row[f"MAX_CREDS_TH__{num}"] = credit_map.get(code_upper, subj['fallback_cred'])
                 
-                new_row[f"OBT_CREDS_TH__{num}"] = str(row[c+3]) if pd.notna(row[c+3]) else "" # Total (100) Marks
-                
-                # --- UPDATED: CRD_POINT_TH mapped to CiGi column (Offset c+8) ---
-                new_row[f"CRD_POINT_TH__{num}"] = str(row[c+8]) if pd.notna(row[c+8]) else "" # CiGi Marks
-                
-                new_row[f"GRD_LETTR_TH__{num}"] = str(row[c+6]) if pd.notna(row[c+6]) else "" # Letter Grade
-                new_row[f"GRD_POINT_TH__{num}"] = str(row[c+5]) if pd.notna(row[c+5]) else "" # Grade Point
+                new_row[f"OBT_CREDS_TH__{num}"] = str(row[c+3]) if pd.notna(row[c+3]) else "" 
+                new_row[f"CRD_POINT_TH__{num}"] = str(row[c+8]) if pd.notna(row[c+8]) else "" # CiGi
+                new_row[f"GRD_LETTR_TH__{num}"] = str(row[c+6]) if pd.notna(row[c+6]) else "" 
+                new_row[f"GRD_POINT_TH__{num}"] = str(row[c+5]) if pd.notna(row[c+5]) else "" 
                 new_row[f"RESULT_TH__{num}"] = "" 
                 new_row[f"REMARKS_TH__{num}"] = ""
 
@@ -223,15 +174,15 @@ if uploaded_file is not None:
             st.error("No valid student data found.")
         else:
             final_df = pd.DataFrame(processed_data)
-            st.success(f"Processing Complete! Successfully combined data for **{subject_count} Subjects** & **{len(final_df)} Students**.")
+            st.success(f"Processing Complete! Automatically read Program Structure & mapped **{subject_count} Subjects** for **{len(final_df)} Students**.")
             
-            st.info("✅ **CRD_POINT_TH** column now maps directly from the **CiGi** column in the TR sheet.")
+            st.info(f"✅ Auto-Detected Grand Credit Structure: **{grand_total_structure if grand_total_structure else 'N/A'}**")
             
             st.subheader("Data Preview")
             st.dataframe(final_df)
 
             st.subheader("File Rename & Download")
-            output_name = st.text_input("Rename your file here:", value=f"Final_Truscholar_{subject_count}_Subjects_Mapped")
+            output_name = st.text_input("Rename your file here:", value=f"Final_Truscholar_{subject_count}_Subjects_Auto")
             if not output_name.endswith('.xlsx'):
                 output_name += '.xlsx'
 
