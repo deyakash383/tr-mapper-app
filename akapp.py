@@ -6,7 +6,7 @@ import openpyxl
 from datetime import datetime
 
 st.set_page_config(page_title="TR Sheet Processor", layout="wide")
-st.title("TR Sheet Mapper & Downloader (Pro Version V2)")
+st.title("Truscholar TR Sheet")
 
 # --- Helper Function for Demo Files ---
 def to_excel(df):
