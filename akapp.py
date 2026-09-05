@@ -7,7 +7,6 @@ from datetime import datetime
 
 st.set_page_config(page_title="TR Sheet Processor", layout="wide")
 st.title("TR Sheet Mapper & Downloader (Pro Version V2)")
-st.info("💡 Yeh tool automatically credit structure detect karega aur email column se data extract karega!")
 
 # --- Helper Function for Demo Files ---
 def to_excel(df):
