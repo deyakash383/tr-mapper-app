@@ -25,7 +25,6 @@ grand_total_structure = ""
 
 with col1:
     st.subheader("1. Student Details")
-    # Demo File 1
     demo_student_df = pd.DataFrame({
         "Enrollment No": ["240810500024", "240810500025"], 
         "Student Name": ["Aasmant Umesh Mohadikar", "Rahul Kumar"], 
@@ -40,7 +39,6 @@ with col1:
             sdf = pd.read_excel(student_file)
             sdf.columns = [str(c).strip().upper() for c in sdf.columns]
             
-            # Find columns dynamically
             enr_col = [c for c in sdf.columns if 'ENROLL' in c or 'ROLL' in c or 'REG' in c]
             name_col_stu = [c for c in sdf.columns if 'NAME' in c]
             email_col = [c for c in sdf.columns if 'EMAIL' in c]
@@ -49,8 +47,6 @@ with col1:
             if enr_col:
                 for _, row in sdf.iterrows():
                     reg = str(row[enr_col[0]]).strip()
-                    
-                    # Extracting Name, Email and Hall Admit from the mapping file
                     stu_name = str(row[name_col_stu[0]]).strip() if name_col_stu and pd.notna(row[name_col_stu[0]]) else ""
                     email = str(row[email_col[0]]).strip() if email_col and pd.notna(row[email_col[0]]) else ""
                     hall = str(row[hall_col[0]]).strip() if hall_col and pd.notna(row[hall_col[0]]) else ""
@@ -64,7 +60,6 @@ with col1:
 
 with col2:
     st.subheader("2. Credit Structure")
-    # Demo File 2
     demo_credit_df = pd.DataFrame({
         "Sub Code": ["AVP204", "AVP205", "AVP207", "Total"], 
         "Credit Structure": ["0-3-0", "0-3-0", "3-0-0", "03-10-08"]
@@ -147,19 +142,13 @@ if uploaded_file is not None:
             current_col += 9 
             
         subject_count = len(subjects)
-
-        # --- GRAND TOTAL MARKS CALCULATION ---
-        # Har subject ka MAX_MARKS_TH 100 fix hota hai final sheet mein, 
-        # isiliye Grand Total Marks = subject_count * 100
         calculated_grand_ttl_marks = subject_count * 100
 
-        # Total Credits Calculation logic
         total_credits_num = 0
         for subj in subjects:
             struct = credit_map.get(subj['code'].upper(), subj['fallback_cred'])
             total_credits_num += calculate_credits_from_structure(struct) if '-' in str(struct) else int(float(struct)) if str(struct).isdigit() else 0
 
-        # Base Columns
         base_columns = [
             'NAME', 'EMAIL', 'ENROLLMENT_NO', 'HALL_ADMIT_NO', 'EXAM_CENTER', 
             'EXAM_DATE', 'RESULT_DATE', 'DEGREE_DATE', 'GRAND_TTL_MARKS', 
@@ -190,10 +179,7 @@ if uploaded_file is not None:
             new_row["EMAIL"] = student_map.get(reg_no, {}).get("email", "")
             new_row["HALL_ADMIT_NO"] = student_map.get(reg_no, {}).get("hall", "")
 
-            # --- MAP FROM CREDIT STRUCTURE (UPLOAD 2) ---
             new_row["GRAND_TTL_CREDITS"] = grand_total_structure 
-
-            # --- MAP CALCULATED GRAND TOTAL MARKS ---
             new_row["GRAND_TTL_MARKS"] = str(calculated_grand_ttl_marks) if calculated_grand_ttl_marks > 0 else ""
             
             new_row["TOTAL_OBT_MARKS"] = "" 
@@ -215,19 +201,19 @@ if uploaded_file is not None:
                 
                 new_row[f"SUBJ_NAME__{num}"] = subj['name']
                 new_row[f"SUBJ_CODE__{num}"] = subj['code']
-                
-                # --- MAX_MARKS_TH (always 100) -> Yehi judkar Grand Total ban raha hai ---
                 new_row[f"MAX_MARKS_TH__{num}"] = "100" 
-                
                 new_row[f"MIN_MARKS_TH__{num}"] = "" 
                 new_row[f"OBT_MARKS_TH__{num}"] = "" 
                 
                 new_row[f"MAX_CREDS_TH__{num}"] = credit_map.get(code_upper, subj['fallback_cred'])
                 
-                new_row[f"OBT_CREDS_TH__{num}"] = str(row[c+3]) if pd.notna(row[c+3]) else "" 
-                new_row[f"CRD_POINT_TH__{num}"] = str(row[c+1]) if pd.notna(row[c+1]) else "" 
-                new_row[f"GRD_LETTR_TH__{num}"] = str(row[c+6]) if pd.notna(row[c+6]) else "" 
-                new_row[f"GRD_POINT_TH__{num}"] = str(row[c+5]) if pd.notna(row[c+5]) else "" 
+                new_row[f"OBT_CREDS_TH__{num}"] = str(row[c+3]) if pd.notna(row[c+3]) else "" # Total (100) Marks
+                
+                # --- UPDATED: CRD_POINT_TH mapped to CiGi column (Offset c+8) ---
+                new_row[f"CRD_POINT_TH__{num}"] = str(row[c+8]) if pd.notna(row[c+8]) else "" # CiGi Marks
+                
+                new_row[f"GRD_LETTR_TH__{num}"] = str(row[c+6]) if pd.notna(row[c+6]) else "" # Letter Grade
+                new_row[f"GRD_POINT_TH__{num}"] = str(row[c+5]) if pd.notna(row[c+5]) else "" # Grade Point
                 new_row[f"RESULT_TH__{num}"] = "" 
                 new_row[f"REMARKS_TH__{num}"] = ""
 
@@ -239,9 +225,9 @@ if uploaded_file is not None:
             final_df = pd.DataFrame(processed_data)
             st.success(f"Processing Complete! Successfully combined data for **{subject_count} Subjects** & **{len(final_df)} Students**.")
             
-            st.info(f"✅ **GRAND_TTL_MARKS** = {calculated_grand_ttl_marks} (Calculated via total sum of MAX_MARKS_TH).")
+            st.info("✅ **CRD_POINT_TH** column now maps directly from the **CiGi** column in the TR sheet.")
             
-            st.subheader("Data Preview (Showing fully mapped data)")
+            st.subheader("Data Preview")
             st.dataframe(final_df)
 
             st.subheader("File Rename & Download")
