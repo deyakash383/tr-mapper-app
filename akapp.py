@@ -74,6 +74,39 @@ def calculate_credits_from_structure(struct_str):
     except:
         return 0
 
+def sum_credit_structures(struct_list):
+    """
+    Position-wise (L-T-P) sum of structures like '02-00-00', '00-03-00',
+    '04-00-00', '00-00-08' etc.
+    Returns a combined string like '06-03-08'.
+    Used when the sheet has NO explicit TOTAL row and we need to
+    auto-calculate the grand total credit structure from subject rows.
+    """
+    parsed = []
+    max_len = 0
+    for s in struct_list:
+        if not s or str(s).strip().lower() == 'nan':
+            continue
+        parts = str(s).strip().split('-')
+        try:
+            nums = [int(float(p)) for p in parts if p.strip() != '']
+        except:
+            continue
+        if nums:
+            parsed.append(nums)
+            max_len = max(max_len, len(nums))
+    
+    if not parsed:
+        return ""
+    
+    totals = [0] * max_len
+    for nums in parsed:
+        for i, n in enumerate(nums):
+            totals[i] += n
+    
+    # Format each part with 2-digit leading zero, like original style
+    return "-".join(f"{t:02d}" for t in totals)
+
 def extract_credit_structure_from_sheet(xls_file, sheet_name):
     """
     Automatically detect and extract credit structure from Program Structure sheet using openpyxl
@@ -151,6 +184,12 @@ def extract_credit_structure_from_sheet(xls_file, sheet_name):
                 if isinstance(credit, (int, float)):
                     credit_value_map[code] = int(credit)
                 st.write(f"  📚 {code}: {struct} (Credit: {credit}) - {name}")
+        
+        # ===== AUTO-CALCULATE TOTAL if no explicit TOTAL row found =====
+        if not grand_total_structure and credit_map:
+            grand_total_structure = sum_credit_structures(list(credit_map.values()))
+            if grand_total_structure:
+                st.info(f"ℹ️ Koi explicit TOTAL row nahi mili — subjects ke credit structures ko jodkar auto-calculate kiya: **{grand_total_structure}**")
         
         return grand_total_structure, credit_map, credit_value_map
     
@@ -261,6 +300,17 @@ if uploaded_file is not None:
             struct = credit_map.get(code_upper, subj['fallback_cred'])
             total_credits_num += calculate_credits_from_structure(struct)
         
+        # ===== FALLBACK: if Program Structure sheet gave no grand total,
+        # try to build it from the per-subject structures detected on the TR sheet =====
+        if not grand_total_structure:
+            fallback_structs = [
+                credit_map.get(subj['code'].upper(), subj['fallback_cred'])
+                for subj in subjects
+            ]
+            grand_total_structure = sum_credit_structures(fallback_structs)
+            if grand_total_structure:
+                st.info(f"ℹ️ TR sheet ke subjects se GRAND_TTL_CREDITS auto-calculate kiya: **{grand_total_structure}**")
+        
         st.success(f"✅ Detected **{subject_count} Subjects** | Total Credits: **{total_credits_num}**")
         
         # ===== CREATE OUTPUT COLUMNS =====
@@ -359,7 +409,7 @@ if uploaded_file is not None:
             
             st.info("""
             ✅ **Auto-Detected Features:**
-            - GRAND_TTL_CREDITS: Automatically set from Program Structure sheet
+            - GRAND_TTL_CREDITS: Automatically set from Program Structure sheet (ya subject-wise structures se auto-calculate)
             - MAX_CREDS_TH__01 to MAX_CREDS_TH__05: Subject-wise credit structure
             - EMAIL: Extracted from Column G of TR sheet (Priority over Student Details file)
             """)
