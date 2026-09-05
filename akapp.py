@@ -4,7 +4,7 @@ import io
 
 st.set_page_config(page_title="TR Sheet Processor", layout="wide")
 st.title("TR Sheet Mapper & Downloader (Fully Automated)")
-st.info("💡 Yeh tool ek hi TR file ke andar maujud 'Program Structure' aur 'TR Sheet' dono ko apne aap read kar lega!")
+st.info("💡 Yeh tool ek hi TR file ke andar maujud 'Program Structure' aur 'TR Sheet' dono ko read karke credits aur structure properly map karega.")
 
 # ==========================================
 # SINGLE FILE UPLOAD (TR Sheet with Structure)
@@ -13,6 +13,7 @@ uploaded_file = st.file_uploader("Upload Main TR File (Excel containing Program 
 
 def calculate_credits_from_structure(struct_str):
     try:
+        # Sum up parts of credit structure like "0-3-0" -> 3
         return sum(int(float(part)) for part in str(struct_str).strip().split('-') if part.strip().isdigit())
     except:
         return 0
@@ -30,30 +31,32 @@ if uploaded_file is not None:
             if 'program' in s.lower() or 'structure' in s.lower():
                 prog_sheet_name = s
             elif s.lower() != 'program structure':
-                tr_sheet_name = s # Assuming the other sheet is the TR sheet
+                tr_sheet_name = s 
                 
         if not tr_sheet_name:
-            tr_sheet_name = sheet_names[0] # Fallback
+            tr_sheet_name = sheet_names[0]
 
         # Read Program Structure to build credit map automatically
         credit_map = {}
         grand_total_structure = ""
         
         if prog_sheet_name:
+            # Read program structure starting from header row where columns exist
             prog_df = pd.read_excel(xls, sheet_name=prog_sheet_name)
             prog_df.columns = [str(c).strip().upper() for c in prog_df.columns]
             
-            code_col = [c for c in prog_df.columns if 'CODE' in c or 'SUB' in c]
-            struct_col = [c for c in prog_df.columns if 'CREDIT' in c or 'STRUCTURE' in c]
+            # Find sub code and credit structure columns dynamically
+            code_col = next((c for c in prog_df.columns if 'CODE' in c or 'SUB' in c), None)
+            struct_col = next((c for c in prog_df.columns if 'STRUCTURE' in c or 'CREDIT STRUCTURE' in c), None)
             
             if code_col and struct_col:
                 for _, row in prog_df.iterrows():
-                    code_val = str(row[code_col[0]]).strip()
-                    struct_val = str(row[struct_col[0]]).strip()
+                    code_val = str(row[code_col]).strip()
+                    struct_val = str(row[struct_col]).strip()
                     
                     if code_val.upper() == 'TOTAL':
                         grand_total_structure = struct_val
-                    elif pd.notna(row[code_col[0]]):
+                    elif pd.notna(row[code_col]) and code_val.lower() != 'nan':
                         credit_map[code_val.upper()] = struct_val
 
         # Read Main TR Sheet
@@ -96,11 +99,23 @@ if uploaded_file is not None:
         subject_count = len(subjects)
         calculated_grand_ttl_marks = subject_count * 100
 
-        # Calculate Total Credits from the structure map automatically
+        # --- CALCULATE TOTAL OBT CREDITS AUTOMATICALLY FROM MAPPED STRUCTURE ---
         total_credits_num = 0
         for subj in subjects:
-            struct = credit_map.get(subj['code'].upper(), subj['fallback_cred'])
-            total_credits_num += calculate_credits_from_structure(struct) if '-' in str(struct) else int(float(struct)) if str(struct).isdigit() else 0
+            code_upper = subj['code'].upper()
+            struct = credit_map.get(code_upper, subj['fallback_cred'])
+            # If structure is like "0-3-0", calculate its numerical sum
+            if '-' in str(struct):
+                total_credits_num += calculate_credits_from_structure(struct)
+            else:
+                try:
+                    total_credits_num += int(float(struct))
+                except:
+                    pass
+
+        # If grand total structure wasn't explicitly found in 'Total' row, fallback to generated sum string
+        if not grand_total_structure and subject_count > 0:
+            grand_total_structure = str(total_credits_num)
 
         # Base Columns for Truscholar Format
         base_columns = [
@@ -131,12 +146,14 @@ if uploaded_file is not None:
             new_row["EMAIL"] = ""
             new_row["HALL_ADMIT_NO"] = ""
 
-            # --- AUTO-MAP GRAND TOTAL CREDITS (e.g. 03-10-08) FROM PROGRAM STRUCTURE ---
+            # --- MAPPING GRAND TOTAL CREDITS & TOTALS ---
             new_row["GRAND_TTL_CREDITS"] = grand_total_structure 
             new_row["GRAND_TTL_MARKS"] = str(calculated_grand_ttl_marks) if calculated_grand_ttl_marks > 0 else ""
             
             new_row["TOTAL_OBT_MARKS"] = "" 
             new_row["TOTAL_OBT_CREDITS"] = str(total_credits_num) if total_credits_num > 0 else ""
+            
+            # --- MULTIPLY TOTAL CREDITS BY 10 FOR CREDIT_POINT ---
             new_row["CREDIT_POINT"] = str(total_credits_num * 10) if total_credits_num > 0 else ""
             
             new_row["SGPA"] = str(row[sgpa_col]) if sgpa_col != -1 and pd.notna(row[sgpa_col]) else ""
@@ -158,7 +175,7 @@ if uploaded_file is not None:
                 new_row[f"MIN_MARKS_TH__{num}"] = "" 
                 new_row[f"OBT_MARKS_TH__{num}"] = "" 
                 
-                # --- AUTO-MAP SUBJECT CREDIT STRUCTURE (e.g. 0-3-0) FROM PROGRAM STRUCTURE ---
+                # --- PROPERLY MAP SUBJECT-WISE CREDIT STRUCTURE (e.g. 0-3-0) ---
                 new_row[f"MAX_CREDS_TH__{num}"] = credit_map.get(code_upper, subj['fallback_cred'])
                 
                 new_row[f"OBT_CREDS_TH__{num}"] = str(row[c+3]) if pd.notna(row[c+3]) else "" 
@@ -174,9 +191,9 @@ if uploaded_file is not None:
             st.error("No valid student data found.")
         else:
             final_df = pd.DataFrame(processed_data)
-            st.success(f"Processing Complete! Automatically read Program Structure & mapped **{subject_count} Subjects** for **{len(final_df)} Students**.")
+            st.success(f"Processing Complete! Successfully mapped structure for **{subject_count} Subjects** & **{len(final_df)} Students**.")
             
-            st.info(f"✅ Auto-Detected Grand Credit Structure: **{grand_total_structure if grand_total_structure else 'N/A'}**")
+            st.info(f"✅ Grand Total Structure: **{grand_total_structure}** | Total Obt Credits: **{total_credits_num}** | Credit Point: **{total_credits_num * 10}**")
             
             st.subheader("Data Preview")
             st.dataframe(final_df)
