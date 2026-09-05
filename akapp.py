@@ -19,7 +19,7 @@ def to_excel(df):
 # STEP 1: SUPPLEMENTARY STUDENT FILE UPLOAD
 # ==========================================
 st.header("Step 1: Upload Student Details (Optional)")
-st.write("⚠️ Yeh file optional hai.")
+st.write("⚠️ Optional")
 
 student_map = {}
 
