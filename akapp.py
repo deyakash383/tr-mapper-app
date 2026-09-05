@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+import openpyxl
+from datetime import datetime
 
 st.set_page_config(page_title="TR Sheet Processor", layout="wide")
 st.title("TR Sheet Mapper & Downloader (Pro Version V2)")
@@ -72,53 +74,91 @@ def calculate_credits_from_structure(struct_str):
     except:
         return 0
 
-def extract_credit_structure_from_sheet(df):
+def extract_credit_structure_from_sheet(xls_file, sheet_name):
     """
-    Automatically detect and extract credit structure from Program Structure sheet
-    Returns: (grand_total_structure, credit_map)
+    Automatically detect and extract credit structure from Program Structure sheet using openpyxl
+    Returns: (grand_total_structure, credit_map, credit_value_map)
     """
-    credit_map = {}
+    credit_map = {}  # Maps CODE -> Credit Structure (e.g., "0-3-0")
+    credit_value_map = {}  # Maps CODE -> Credit Value (e.g., 3)
     grand_total_structure = ""
     
     try:
-        # Find columns dynamically
-        headers = [str(x).strip().upper() for x in df.iloc[0].values]
+        wb = openpyxl.load_workbook(xls_file, data_only=True)
+        if sheet_name not in wb.sheetnames:
+            st.warning(f"⚠️ Sheet '{sheet_name}' not found")
+            return "", {}, {}
+        
+        ws = wb[sheet_name]
+        all_rows = list(ws.iter_rows(values_only=True))
+        
+        if len(all_rows) < 2:
+            st.warning(f"⚠️ Sheet '{sheet_name}' is empty")
+            return "", {}, {}
+        
+        # Get headers from first row
+        header_row = all_rows[0]
+        headers = [str(x).strip().upper() if x else "" for x in header_row]
+        
+        # Find column indices
         code_col_idx = -1
         struct_col_idx = -1
+        credit_col_idx = -1
         name_col_idx = -1
         
         for i, h in enumerate(headers):
-            if 'CODE' in h or 'SUB' in h:
+            if 'SUB CODE' in h or 'CODE' in h:
                 code_col_idx = i
-            if 'STRUCTURE' in h or 'CREDIT' in h:
+            if 'STRUCTURE' in h:
                 struct_col_idx = i
+            if 'CREDIT' in h and 'STRUCTURE' not in h:
+                credit_col_idx = i
             if 'NAME' in h or 'SUBJECT' in h:
                 name_col_idx = i
         
+        st.info(f"📍 Detected columns: Code={code_col_idx}, Structure={struct_col_idx}, Credit={credit_col_idx}, Name={name_col_idx}")
+        
         if code_col_idx == -1 or struct_col_idx == -1:
-            return "", {}
+            st.warning(f"❌ Could not find Code or Structure columns")
+            return "", {}, {}
         
-        # Extract credit structure for each subject
-        for idx, row in df.iterrows():
-            if idx == 0:  # Skip header
-                continue
+        # Extract credit structure for each subject (skip header row 0)
+        for row_idx in range(1, len(all_rows)):
+            row = all_rows[row_idx]
             
-            code = str(row[code_col_idx]).strip().upper()
-            struct = str(row[struct_col_idx]).strip()
+            code = str(row[code_col_idx]).strip().upper() if code_col_idx >= 0 and pd.notna(row[code_col_idx]) else ""
+            struct = row[struct_col_idx] if struct_col_idx >= 0 else ""
+            credit = row[credit_col_idx] if credit_col_idx >= 0 else ""
+            name = row[name_col_idx] if name_col_idx >= 0 else ""
             
-            if pd.isna(code) or code == '' or code == 'NAN':
-                continue
+            # Handle datetime object (convert to string format)
+            if isinstance(struct, datetime):
+                # Convert datetime(2008, 10, 3) to "03-10-08"
+                struct = f"{struct.day:02d}-{struct.month:02d}-{struct.year % 100:02d}"
             
-            if code == 'TOTAL':
+            struct = str(struct).strip() if struct else ""
+            
+            # Check if this is TOTAL row (last row or if credit is present but code is not)
+            is_total_row = (not code or code == 'NONE' or code == '') and (credit or struct)
+            
+            if is_total_row:
+                # This is the TOTAL row
                 grand_total_structure = struct
-            else:
+                st.success(f"✅ Found Grand Total Credit Structure: **{grand_total_structure}**")
+            elif code and code not in ['TOTAL', 'NONE']:
+                # Subject row
                 credit_map[code] = struct
+                if isinstance(credit, (int, float)):
+                    credit_value_map[code] = int(credit)
+                st.write(f"  📚 {code}: {struct} (Credit: {credit}) - {name}")
         
-        return grand_total_structure, credit_map
+        return grand_total_structure, credit_map, credit_value_map
     
     except Exception as e:
-        st.warning(f"Could not auto-extract credit structure: {e}")
-        return "", {}
+        st.error(f"❌ Error extracting credit structure: {e}")
+        import traceback
+        st.error(traceback.format_exc())
+        return "", {}, {}
 
 if uploaded_file is not None:
     try:
@@ -152,16 +192,22 @@ if uploaded_file is not None:
         
         # ===== READ PROGRAM STRUCTURE SHEET =====
         credit_map = {}
+        credit_value_map = {}
         grand_total_structure = ""
         
         if program_sheet_name:
             try:
-                program_df = pd.read_excel(xls, sheet_name=program_sheet_name, header=None)
-                grand_total_structure, credit_map = extract_credit_structure_from_sheet(program_df)
-                st.success(f"✅ Auto-extracted credit structure! Grand Total: {grand_total_structure}")
-                st.write(f"📊 Subject-wise credits: {credit_map}")
+                st.info(f"🔄 Reading credit structure from sheet: '{program_sheet_name}'...")
+                grand_total_structure, credit_map, credit_value_map = extract_credit_structure_from_sheet(uploaded_file, program_sheet_name)
+                if grand_total_structure:
+                    st.success(f"✅ Auto-extracted Grand Total Credit Structure: **{grand_total_structure}**")
+                    st.info(f"📊 Subject-wise Credit Structures:\n{chr(10).join([f'  • {k}: {v}' for k,v in credit_map.items()])}")
+                else:
+                    st.warning(f"⚠️ Could not extract grand total structure")
             except Exception as e:
                 st.warning(f"Could not read Program Structure sheet: {e}")
+                import traceback
+                st.error(traceback.format_exc())
         
         # ===== PARSE TR SHEET HEADERS =====
         name_col, reg_col, sig_col = -1, -1, -1
@@ -280,23 +326,23 @@ if uploaded_file is not None:
                 new_row[f"MIN_MARKS_TH__{num}"] = ""
                 new_row[f"OBT_MARKS_TH__{num}"] = ""
                 
-                # ===== AUTO-POPULATE MAX_CREDS_TH from credit_map =====
+                # ===== AUTO-POPULATE MAX_CREDS_TH from credit_map (extracted from Program Structure) =====
                 struct_from_map = credit_map.get(code_upper)
                 if struct_from_map:
                     new_row[f"MAX_CREDS_TH__{num}"] = struct_from_map
                 else:
                     new_row[f"MAX_CREDS_TH__{num}"] = subj['fallback_cred']
                 
-                # Total Marks
+                # Total Marks from TR sheet
                 new_row[f"OBT_CREDS_TH__{num}"] = str(row[c + 3]) if pd.notna(row[c + 3]) else ""
                 
-                # CiGi from column
+                # CiGi from TR sheet column
                 new_row[f"CRD_POINT_TH__{num}"] = str(row[c + 8]) if pd.notna(row[c + 8]) else ""
                 
-                # Grade Letter
+                # Grade Letter from TR sheet
                 new_row[f"GRD_LETTR_TH__{num}"] = str(row[c + 6]) if pd.notna(row[c + 6]) else ""
                 
-                # Grade Point
+                # Grade Point from TR sheet
                 new_row[f"GRD_POINT_TH__{num}"] = str(row[c + 5]) if pd.notna(row[c + 5]) else ""
                 
                 new_row[f"RESULT_TH__{num}"] = ""
