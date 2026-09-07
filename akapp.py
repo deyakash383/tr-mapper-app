@@ -5,8 +5,13 @@ import re
 import openpyxl
 from datetime import datetime
 
-st.set_page_config(page_title="TR Sheet Processor", layout="wide")
-st.title("Truscholar TR Sheet")
+st.set_page_config(page_title="TR Sheet Processor", page_icon="logo.png", layout="wide")
+
+logo_col, title_col = st.columns([1, 10])
+with logo_col:
+    st.image("logo.png", width=80)
+with title_col:
+    st.title("TR Sheet Mapper & Downloader (Pro Version V2)")
 
 # --- Helper Function for Demo Files ---
 def to_excel(df):
@@ -19,7 +24,7 @@ def to_excel(df):
 # STEP 1: SUPPLEMENTARY STUDENT FILE UPLOAD
 # ==========================================
 st.header("Step 1: Upload Student Details (Optional)")
-st.write("⚠️ Optional")
+st.write("⚠️ Yeh file optional hai.")
 
 student_map = {}
 
@@ -31,29 +36,76 @@ demo_student_df = pd.DataFrame({
 })
 st.download_button("⬇️ Download Demo (Student Details)", data=to_excel(demo_student_df), file_name="Demo_Student_Details.xlsx", key="demo_stu")
 
-student_file = st.file_uploader("Upload Student Details File:", type=["xlsx", "xls"], key="stu_upload")
+student_file = st.file_uploader("Upload Student Details File:", type=["xlsx", "xls", "csv"], key="stu_upload")
+
+def find_exact_col(cols, *names):
+    """Return the first column name from `names` that exists exactly in `cols`."""
+    for n in names:
+        if n in cols:
+            return n
+    return None
 
 if student_file:
     try:
-        sdf = pd.read_excel(student_file)
+        # Support both Excel and CSV reference files (e.g. Truscholar student export)
+        if student_file.name.lower().endswith('.csv'):
+            sdf = pd.read_csv(student_file)
+        else:
+            sdf = pd.read_excel(student_file)
+        
         sdf.columns = [str(c).strip().upper() for c in sdf.columns]
         
-        enr_col = [c for c in sdf.columns if 'ENROLL' in c or 'ROLL' in c or 'REG' in c]
-        name_col_stu = [c for c in sdf.columns if 'NAME' in c]
-        email_col = [c for c in sdf.columns if 'EMAIL' in c]
-        hall_col = [c for c in sdf.columns if 'HALL' in c or 'ADMIT' in c]
+        # ===== PRIORITY 1: Exact known column names (Truscholar export format) =====
+        reg_col_name = find_exact_col(sdf.columns, 'REGISTRATION_NO', 'ENROLLMENT_NO')
+        alt_reg_col_name = find_exact_col(sdf.columns, 'ENROLLMENT_NO', 'REGISTRATION_NO')
+        email_col_name = find_exact_col(sdf.columns, 'CONTACT_EMAIL', 'EMAIL_ID', 'EMAIL')
+        hall_col_name = find_exact_col(sdf.columns, 'HALL_ADMIT_NO__1', 'HALL_ADMIT_NO', 'HALL ADMIT NO')
+        first_name_col = find_exact_col(sdf.columns, 'FIRST_NAME')
+        last_name_col = find_exact_col(sdf.columns, 'LAST_NAME')
+        name_col_name = find_exact_col(sdf.columns, 'STUDENT NAME', 'NAME')
         
-        if enr_col:
+        # ===== PRIORITY 2 (fallback): generic keyword search — for older/simple templates =====
+        if not reg_col_name:
+            enr_col = [c for c in sdf.columns if 'ENROLL' in c or 'ROLL' in c or 'REG' in c]
+            reg_col_name = enr_col[0] if enr_col else None
+        if not email_col_name:
+            email_col = [c for c in sdf.columns if 'EMAIL' in c]
+            email_col_name = email_col[0] if email_col else None
+        if not hall_col_name:
+            hall_col = [c for c in sdf.columns if 'HALL' in c or 'ADMIT' in c]
+            hall_col_name = hall_col[0] if hall_col else None
+        if not name_col_name and not first_name_col and not last_name_col:
+            name_col_generic = [c for c in sdf.columns if 'NAME' in c]
+            name_col_name = name_col_generic[0] if name_col_generic else None
+        
+        if reg_col_name:
             for _, row in sdf.iterrows():
-                reg = str(row[enr_col[0]]).strip()
-                stu_name = str(row[name_col_stu[0]]).strip() if name_col_stu and pd.notna(row[name_col_stu[0]]) else ""
-                email = str(row[email_col[0]]).strip() if email_col and pd.notna(row[email_col[0]]) else ""
-                hall = str(row[hall_col[0]]).strip() if hall_col and pd.notna(row[hall_col[0]]) else ""
+                reg = str(row[reg_col_name]).strip() if pd.notna(row[reg_col_name]) else ""
+                alt_reg = str(row[alt_reg_col_name]).strip() if alt_reg_col_name and pd.notna(row[alt_reg_col_name]) else ""
                 
-                student_map[reg] = {"email": email, "hall": hall, "name": stu_name}
-            st.success("✅ Student Details mapped successfully!")
+                # Prefer FIRST_NAME + LAST_NAME combo if present, else fall back to a single NAME column
+                if first_name_col or last_name_col:
+                    fn = str(row[first_name_col]).strip() if first_name_col and pd.notna(row[first_name_col]) else ""
+                    ln = str(row[last_name_col]).strip() if last_name_col and pd.notna(row[last_name_col]) else ""
+                    stu_name = f"{fn} {ln}".strip()
+                else:
+                    stu_name = str(row[name_col_name]).strip() if name_col_name and pd.notna(row[name_col_name]) else ""
+                
+                email = str(row[email_col_name]).strip() if email_col_name and pd.notna(row[email_col_name]) else ""
+                hall = str(row[hall_col_name]).strip() if hall_col_name and pd.notna(row[hall_col_name]) else ""
+                
+                info = {"email": email, "hall": hall, "name": stu_name}
+                
+                # Store under both Registration No and Enrollment No (when both exist and differ)
+                # so the lookup matches whichever ID the TR sheet uses.
+                if reg and reg.lower() != 'nan':
+                    student_map[reg] = info
+                if alt_reg and alt_reg.lower() != 'nan' and alt_reg != reg:
+                    student_map[alt_reg] = info
+            
+            st.success(f"✅ Student Details mapped successfully! ({len(sdf)} records loaded — matched on {reg_col_name})")
         else:
-            st.error("Enrollment No column not found in Student Details file.")
+            st.error("Enrollment No / Registration No column not found in Student Details file.")
     except Exception as e:
         st.error(f"Error reading Student file: {e}")
 
